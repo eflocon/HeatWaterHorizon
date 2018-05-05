@@ -34,8 +34,8 @@
 
 //Hardware
 #define PinOutputLED 13 // Optics
-#define PinOutputPumpHot 6 // To MOSFET-Gate of Pump 3
-#define PinOutputPumpCold 7 // To MOSFET-Gate of Pump 4
+#define PinOutputPumpHot 7 // To MOSFET-Gate of Pump 3
+#define PinOutputPumpCold 6 // To MOSFET-Gate of Pump 4
 
 //DeviceMapping
 #define T0 0
