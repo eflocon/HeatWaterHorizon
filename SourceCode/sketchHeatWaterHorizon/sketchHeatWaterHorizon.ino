@@ -1,23 +1,54 @@
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//WAFLOCON FIRMWARE 2017
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//----------------------------------------------------------------------------------------------------------------
+//https://learn.adafruit.com/adafruit-1-wire-gpio-breakout-ds2413/onewire-library
+//https://github.com/adafruit/Adafruit_DS2413
+//----------------------------------------------------------------------------------------------------------------
+
 #include <OneWire.h>
 #include <DallasTemperature.h>
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-#define ONE_WIRE_BUS 3                             // Data wire is plugged into digital pin 3 on the Arduino
-#define NumberOfDevices 10                         // Set maximum number of devices in order to dimension 
-#define NameMaxCharLength 7                        // extra char for string terminator
-// Array holding all Device Address arrays.
 //----------------------------------------------------------------------------------------------------------------
+//UserSettings
+#define TEMPERATURE_MIN 25           //[Grad Celsius] MinTemperature at CC for Access to Barrel
+//!!!! TEMPERATURE_DIFF_TRIGGER > TEMPERATURE_HYSTERESIS !!!!!
+#define TEMPERATURE_DIFF_TRIGGER 4   //[Grad Celsius] TriggerdifferenceTemperature
+#define TEMPERATURE_HYSTERESIS 2     //[K] Temperaturedifference beetween Pump ON/OFF
+#define TEMPERATURE_MAX_VALID 70     //[Grad Celsius]
 
-//SensorMapping
+//Stuff
+#define NilTemperature -127
+
+//B = BHSF, A = BHSE
+#define LEVEL_LOW 0x0A  //BIN: 1010 // B + A == GND
+#define LEVEL_MID 0x0E  //BIN: 1110 // B (BHSE) open == HIGH(PullUp), A (BHSF) shorten to GND == LOW
+#define LEVEL_FULL 0x0F //BIN: 1111 // B+A open == HIGH
+#define LEVEL_UNKNOWN 0x00 //BIN: 0000 // Default value
+
+#define PUMP_MODE_NONE 0
+#define PUMP_MODE_HOTNCOLD 1
+#define PUMP_MODE_HOT 2
+#define PUMP_MODE_COLD 3
+#define PUMP_MODE_ALL 4
+
+//Hardware
+#define PinOutputLED 13 // Optics
+#define PinOutputPumpHot 6 // To MOSFET-Gate of Pump 3
+#define PinOutputPumpCold 7 // To MOSFET-Gate of Pump 4
+
+//DeviceMapping
 #define T0 0
 #define CC 1
 #define CH 2
 #define BC 3
-#define BH 4
+#define T4 4
 #define T5 5
 #define T6 6
-#define T7 7
+#define BH 7
 #define T8 8
 #define T9 9
+#define E0 10
 
 //ROMAddresses
 #define T0ROM 0x28,0xFF,0x84,0x63,0x90,0x15,0x01,0xE1
@@ -30,61 +61,71 @@
 #define T7ROM 0x28,0xFF,0xD4,0x84,0x90,0x15,0x01,0xBB
 #define T8ROM 0x28,0xFF,0x83,0x65,0x90,0x15,0x01,0xB9
 #define T9ROM 0x28,0xFF,0x50,0x63,0x90,0x15,0x01,0xA0
+#define E0ROM 0x3A,0x4D,0xFF,0x2B,0x00,0x00,0x00,0x8D
 
-//----------------------------------------------------------------------------------------------------------------
-#define PinOutputLED 13                            // Optics
-#define PinOutputFET 7                             // To MOSFET-Gate
-#define NilTemperature -127
-#define ValidTemperatureDifference 5
-#define ActionCollectorDiffTempON 5
-#define ActionCollectorDiffTempOFF 10
-#define ActionCollectorToHot 40
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-OneWire oneWire(ONE_WIRE_BUS);                     // Setup a oneWire instance to communicate with any OneWire devices
-DallasTemperature sensors(&oneWire);               // Pass our oneWire reference to Dallas Temperature.
+#define ONE_WIRE_BUS 3 // Data wire is plugged into digital pin 3 on the Arduino
+#define NumberOfDevices 11 // Set maximum number of devices in order to dimension
+#define NameMaxCharLength 7 // extra char for string terminator
+
+#define DS18B20_FAMILY_ID    0x28
+#define DS2413_FAMILY_ID    0x3A
+#define DS2413_ACCESS_READ  0xF5
+#define DS2413_ACCESS_WRITE 0x5A
+#define DS2413_ACK_SUCCESS  0xAA
+#define DS2413_ACK_ERROR    0xFF
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-byte allAddress [NumberOfDevices][8];              // Device Addresses are 8-element byte arrays.
+OneWire oneWire(ONE_WIRE_BUS); // Setup a oneWire instance to communicate with any OneWire devices
+DallasTemperature sensors(&oneWire); // Pass our oneWire reference to Dallas Temperature.
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+byte allAddress [NumberOfDevices][8]; // Device Addresses are 8-element byte arrays.
 // we need one for each of our DS18B20 sensors.
-
-byte totalDevices;                                 // Declare variable to store number of One Wire devices
+byte totalDevices; // Declare variable to store number of One Wire devices
 // that are actually discovered.
-
-char allNames[NumberOfDevices][NameMaxCharLength] = {"T0", "BC", "BH", "CC", "CH", "T5", "T6", "T7", "T8", "T9"};
-byte ROMMapping[NumberOfDevices] = {T0, BC, BH, CC, CH, T5, T6, T7, T8, T9};
-
-int USBPlugged = 0;                                 // me: 0 = external Power, 1 = USB
+//char allNames[NumberOfDevices][NameMaxCharLength]={"T0","BC","BH","CC","CH","T5","T6","T7","T8","T9"};
+char allNames[NumberOfDevices][NameMaxCharLength] = {"T0", "CC", "CH", "BC", "T4", "T5", "T6", "BH", "T8", "T9", "E0"};
+byte ROMMapping[NumberOfDevices] = {T0, CC, CH, BC, T4, T5, T6, BH, T8, T9, E0};
+int USBPlugged = 0; // me: 0 = external Power, 1 = USB
 int loopCount = 0;
-struct SensorRecord {
-  //  char location[6];
-  byte address[8];
-  bool active = LOW;
-  float temperature[2] = {NilTemperature, NilTemperature};
+struct DeviceRecord {
+  uint8_t address[8];
+  bool active = FALSE;
+  //float temperature[2] = {NilTemperature, NilTemperature};
+  float temperature = NilTemperature;
+  byte IOData = LEVEL_UNKNOWN;
 };
-typedef struct SensorRecord SensorData;
-SensorData Sensors[NumberOfDevices];
-bool PumpON = LOW;
+typedef struct DeviceRecord DeviceData;
+DeviceData Devices[NumberOfDevices];
+
+bool PumpsActive = FALSE;
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void printLine(char sign[1]) {
   for (byte i = 0; i < 70; i++) {
     Serial.print(sign);
   }
 }
+void printSpace(int LFCount) {
+  for (int i = 0; i < LFCount; i++) {
+    Serial.print("\r\n");
+  }
+}
 //----------------------------------------------------------------------------------------------------------------
-void mapSensors() {
-  byte allROMs[NumberOfDevices][8] = {T0ROM, T1ROM, T2ROM, T3ROM, T4ROM, T5ROM, T6ROM, T7ROM, T8ROM, T9ROM};
-  Serial.println("mapSensors()");
+void mapDevices() {
+  byte allROMs[NumberOfDevices][8] = {T0ROM, T1ROM, T2ROM, T3ROM, T4ROM, T5ROM, T6ROM, T7ROM, T8ROM, T9ROM, E0ROM};
+  Serial.println("mapDevices()");
   for (byte d = 0; d < NumberOfDevices; d++) {
     //each device, starting with dd = "BC"
     byte r = ROMMapping[d];
+    Serial.print("\"");
     Serial.print(allNames[d]);
-    Serial.print(" ");
-    Serial.print("T");
+    Serial.print("\" ");
+    Serial.print("(Hardware");
     Serial.print(r);
-    Serial.print("ROM ");
+    Serial.print(") Address: ");
     for (byte ab = 0; ab < 8; ab++) {
-      Sensors[d].address[ab] = allROMs[r][ab];
+      Devices[d].address[ab] = allROMs[r][ab];
       Serial.print("0x");
-      Serial.print(Sensors[d]. address[ab], HEX);
+      Serial.print(Devices[d]. address[ab], HEX);
       Serial.print(" ");
     }
     Serial.println("");
@@ -100,63 +141,126 @@ bool byteArrayMatch(byte byte1[8], byte byte2[8]) {
     }
   }
   if (goil == 8) {
-    return HIGH;
+    return TRUE;
   }
   else {
-    return LOW;
+    return FALSE;
   }
 }
 //----------------------------------------------------------------------------------------------------------------
-void setSensorStatus() {
-  //  Serial.print("setSensorStatus()");
-  //  Serial.println("");
+void setDeviceStatus() {
+  // Serial.print("setDeviceStatus()");
+  // Serial.println("");
   for (byte d = 0; d < NumberOfDevices; d++) {
     byte tempByteArray[8];
     for (byte ab = 0; ab < 8; ab++) {
-      tempByteArray[ab] = Sensors[d].address[ab];
+      tempByteArray[ab] = Devices[d].address[ab];
     }
-    //    Serial.print(allNames[d]);
+    //Serial.print(allNames[d]);
     int hit = -1;
     byte a = 0;
     while (a < NumberOfDevices) {
       if (byteArrayMatch(allAddress[a], tempByteArray)) {
         hit = a;
-        Sensors[d].active = HIGH;
-        //        Serial.print(" = ");
-        //        Serial.print("Device ");
-        //        Serial.print(a);
-        //        Serial.print(" active");
-        //        Serial.println("");
+        Devices[d].active = TRUE;
+        //Serial.print(" = ");
+        //Serial.print("Device ");
+        //Serial.print(a);
+        //Serial.print(" active");
+        //Serial.println("");
         break;
       }
       else {
-        Sensors[d].active = LOW;
+        Devices[d].active = FALSE;
       }
       a++;
     }
     if (hit == -1) {
-      //      Serial.print(" not found");
-      //      Serial.println("");
+      // Serial.print(" not found");
+      // Serial.println("");
     }
   }
-  //  Serial.println("");
+  // Serial.println("");
+}
+//----------------------------------------------------------------------------------------------------------------
+uint8_t readDS2413(byte DS2413Address[8])
+{
+  bool ok = false;
+  uint8_t results;
+
+  oneWire.reset();
+  oneWire.select(DS2413Address);
+  oneWire.write(DS2413_ACCESS_READ);
+
+  results = oneWire.read();                 /* Get the register results   */
+  //Serial.println(results, BIN);
+  //Serial.println(results, HEX);
+  //ok = (!results & 0x0F) == (results >> 4); /* Compare nibbles            */
+  results &= 0x0F;                          /* Clear inverted values      */
+  //Serial.println(results, BIN);
+  //Serial.println(results, HEX);
+  oneWire.reset();
+
+  //return ok ? results : -1;
+  return results;
 }
 //----------------------------------------------------------------------------------------------------------------
 void getDataFromDevices() {
-  Serial.println("getDataFromDevices()");
-  sensors.requestTemperatures();                // Initiate  temperature request to all devices
+  //Serial.println("getDataFromDevices()");
+  sensors.requestTemperatures(); // Initiate temperature request to all devices
   for (byte d = 0; d < NumberOfDevices; d++) {
-    //Write to SensorsArray
-    Sensors[d].temperature[1] = Sensors[d].temperature[0];
-    if (Sensors[d].active) {
-      Sensors[d].temperature[0] = sensors.getTempC(Sensors[d].address);
-      Serial.print(allNames[d]);
-      Serial.print(" -> ");
-      Serial.print(Sensors[d].temperature[0]);
-      Serial.print("C\r\n");
+    if (Devices[d].address[0] ==  DS18B20_FAMILY_ID) {
+      //Write to DevicesArray
+      //Devices[d].temperature[1] = Devices[d].temperature[0]; //?
+      if (Devices[d].active) {
+        //Devices[d].temperature[0] = sensors.getTempC(Devices[d].address);
+        Devices[d].temperature = sensors.getTempC(Devices[d].address);
+        Serial.print(allNames[d]);
+        Serial.print(" -> ");
+        //Serial.println(Devices[d].temperature[0]);
+        Serial.println(Devices[d].temperature);
+        if (Devices[d].temperature > TEMPERATURE_MAX_VALID) {
+          Devices[d].temperature = NilTemperature;
+          Serial.print(F("Temperaturvalue > TEMPERATURE_MAX_VALID"));
+        }
+        //Serial.print("C\r\n");
+      }
+      else {
+        //Devices[d].temperature[0] = NilTemperature;
+        Devices[d].temperature = NilTemperature;
+      }
     }
-    else {
-      Sensors[d].temperature[0] = NilTemperature;
+    if (Devices[d].address[0] == DS2413_FAMILY_ID) {
+      uint8_t state = readDS2413(Devices[d].address); //read DS2413
+      if (Devices[d].active) {
+        Devices[d].IOData = state;                      //safe
+        Serial.print(allNames[d]);
+        Serial.print(" -> ");
+        //Serial.print(state, BIN);
+        //Serial.print(" (");
+        switch (state) {
+          case -1:
+            Serial.print(F("Failed reading the DS2413"));
+            break;
+          case LEVEL_LOW:
+            Serial.print(F("BarrelLevel LOW"));
+            break;
+          case LEVEL_MID:
+            Serial.print(F("BarrelLevel MID"));
+            break;
+          case LEVEL_FULL:
+            Serial.print(F("BarrelLevel FULL"));
+            break;
+          default:
+            Serial.print(F("Unknown State for SensorPhalanx"));
+            break;
+            //Serial.print(")");
+        }
+      }
+      else {
+        Devices[d].IOData = LEVEL_UNKNOWN;
+        Serial.print(F("Barrel offline!"));
+      }
     }
   }
   Serial.println("");
@@ -164,22 +268,22 @@ void getDataFromDevices() {
 //----------------------------------------------------------------------------------------------------------------
 void printAddress(DeviceAddress addr) {
   byte i;
-  for ( i = 0; i < 8; i++) {                      // prefix the printout with 0x
+  for ( i = 0; i < 8; i++) { // prefix the printout with 0x
     Serial.print("0x");
     if (addr[i] < 16) {
-      Serial.print('0');                        // add a leading '0' if required.
+      Serial.print('0'); // add a leading '0' if required.
     }
-    Serial.print(addr[i], HEX);                 // print the actual value in HEX
+    Serial.print(addr[i], HEX); // print the actual value in HEX
     Serial.print(" ");
   }
   Serial.println("");
 }
 //----------------------------------------------------------------------------------------------------------------
 byte discoverOneWireDevices() {
-  byte j = 0;                                      // search for one wire devices and
+  byte j = 0; // search for one wire devices and
   // copy to device address arrays.
-  //  Serial.print("discoverOneWireDevices()");
-  //  Serial.print("\r\n");
+  // Serial.print("discoverOneWireDevices()");
+  // Serial.print("\r\n");
   for (byte i = 0; i < NumberOfDevices; i++) {
     //clearAllAddresses
     for (byte ab = 0; ab < 8; ab++) {
@@ -190,35 +294,13 @@ byte discoverOneWireDevices() {
     j++;
   }
   for (byte i = 0; i < j; i++) {
-    //    Serial.print("Device ");
-    //    Serial.print(i);
-    //    Serial.print(": ");
-    //    printAddress(allAddress[i]);                  // print address from each device address arry.
+    // Serial.print("Device ");
+    // Serial.print(i);
+    // Serial.print(": ");
+    // printAddress(allAddress[i]); // print address from each device address array.
   }
-  //  Serial.print("\r\n");
-  return j                      ;                 // return total number of devices found.
-}
-//----------------------------------------------------------------------------------------------------------------
-/*bool TempValueValid(float TempArray[2]){
-  float tempFloat = abs((TempArray[1]-TempArray[0]));
-  if (tempFloat < ValidTemperatureDifference){
-    return HIGH;
-  }
-  else {
-    return LOW;
-  }
-  }
-*/
-//----------------------------------------------------------------------------------------------------------------
-float checkedTempValue(float TempArray[2]) {
-  float DiffTemp = (TempArray[1] - TempArray[0]);
-  float tempFloat = abs(DiffTemp);
-  if (tempFloat < ValidTemperatureDifference) {
-    return ((TempArray[1] + TempArray[0]) / 2);
-  }
-  else {
-    return NilTemperature;
-  }
+  // Serial.print("\r\n");
+  return j ; // return total number of devices found.
 }
 //----------------------------------------------------------------------------------------------------------------
 byte arrayPos(byte definition) {
@@ -226,7 +308,7 @@ byte arrayPos(byte definition) {
   byte thePosition = NumberOfDevices + 1;
   while (i < NumberOfDevices) {
     //find position of definition in sensor array
-    if (definition ==  ROMMapping[i]) {
+    if (definition == ROMMapping[i]) {
       thePosition = i;
       break;
     }
@@ -238,153 +320,154 @@ byte arrayPos(byte definition) {
   return thePosition;
 }
 //----------------------------------------------------------------------------------------------------------------
-bool PumpRequestCollectorDiff() {
-  Serial.println("PumpRequestCollectorDiff()");
-  float TempCC = checkedTempValue(Sensors[arrayPos(CC)].temperature);
-  float TempCH = checkedTempValue(Sensors[arrayPos(CH)].temperature);
-  float DiffTemp = TempCH - TempCC;
-  bool result = LOW;
-  if (TempCC != NilTemperature && TempCH != NilTemperature) {
-    Serial.print("TempCH-TempCC= ");
-    Serial.print(TempCH);
-    Serial.print(" - ");
-    Serial.print(TempCC);
-    Serial.print(" = ");
-    Serial.print(DiffTemp);
-    if (PumpON == LOW) {
-      Serial.print(" > ONDiffT(");
-      Serial.print(ActionCollectorDiffTempON);
-      Serial.print(")?");
-      if (DiffTemp > ActionCollectorDiffTempON) {
-        result = HIGH;
-        Serial.print(" -> PumpRequest");
-      }
-    }
-    else {
-      Serial.print(" < OFFDiffT(");
-      Serial.print(ActionCollectorDiffTempOFF);
-      Serial.print(")?");
-      if (DiffTemp < ActionCollectorDiffTempOFF) {
-        result = LOW;
-        Serial.print(" -> PumpOFFRequest");
-      }
-      else {
-        //keep ON
-        result = HIGH;
-      }
-    }
+bool pumpAction(int PumpMode, bool switchMode) {
+  bool valPumpHot = FALSE;
+  bool valPumpCold = FALSE;
+  //switchMode == 0 -> Pump OFF;
+  //switchMode == 1 -> Pump ON;
+  switch (PumpMode) {
+    case PUMP_MODE_ALL:
+      //Switch all
+      digitalWrite(PinOutputPumpHot, switchMode);
+      digitalWrite(PinOutputPumpCold, switchMode);
+      valPumpHot = switchMode;
+      valPumpCold = switchMode;
+      break;
+    case PUMP_MODE_HOTNCOLD:
+      //Switch all
+      digitalWrite(PinOutputPumpHot, switchMode);
+      digitalWrite(PinOutputPumpCold, switchMode);
+      valPumpHot = switchMode;
+      valPumpCold = switchMode;
+      break;
+    case PUMP_MODE_HOT:
+      //Switch Hot, switch off Cold
+      digitalWrite(PinOutputPumpHot, switchMode);
+      digitalWrite(PinOutputPumpCold, FALSE);
+      valPumpHot = switchMode;
+      break;
+    case PUMP_MODE_COLD:
+      //Switch Cold, switch off Hot
+      digitalWrite(PinOutputPumpHot, FALSE);
+      digitalWrite(PinOutputPumpCold, switchMode);
+      valPumpCold = switchMode;
+      break;
+    case PUMP_MODE_NONE:
+      //Switch off all
+      digitalWrite(PinOutputPumpHot, FALSE);
+      digitalWrite(PinOutputPumpCold, FALSE);
+      break;
+    default:
+      //Switch off all
+      digitalWrite(PinOutputPumpHot, FALSE);
+      digitalWrite(PinOutputPumpCold, FALSE);
+      break;
   }
-  else {
-    Serial.print("TempCC(");
-    Serial.print(TempCC);
-    Serial.print(") and/or TempCH(");
-    Serial.print(TempCH);
-    Serial.print(") invalid");
-    result = LOW;
-  }
-  Serial.print(" -> ");
-  Serial.println(result);
-  Serial.println("");
-  return result;
-}
-//----------------------------------------------------------------------------------------------------------------
-/*bool PumpRequestCollectorToHot() {
-  Serial.print("PumpRequestCollectorToHot()");
-  Serial.println("");
-  float TempCC = checkedTempValue(Sensors[arrayPos(CC)].temperature);
-  float TempCH = checkedTempValue(Sensors[arrayPos(CH)].temperature);
-  bool result = LOW;
-    Serial.print(TempCH);
-    Serial.print(" || ");
-    Serial.print(TempCC);
-    Serial.print(" > ");
-    Serial.print(ActionCollectorToHot);
-    Serial.print("?");
-  if (TempCC != NilTemperature && TempCH != NilTemperature){
-    if (TempCC > ActionCollectorToHot || TempCH > ActionCollectorToHot){
-      result = HIGH;
-    }
-    else {
-      result = LOW;
-    }
-  }
-  Serial.print(" -> ");
-  Serial.print(result);
-  Serial.println("");
-  Serial.println("");
-  return result;
-  }
-*/
-//----------------------------------------------------------------------------------------------------------------
-bool PumpRequestSensorToHot(byte mappingName, byte switchTemp) {
-  Serial.println("PumpRequestSensorToHot()");
-  float Temp = checkedTempValue(Sensors[arrayPos(mappingName)].temperature);
-  bool result = LOW;
-  Serial.print(allNames[arrayPos(mappingName)]);
-  Serial.print(" (");
-  Serial.print(Temp);
-  Serial.print(") > ");
-  Serial.print(switchTemp);
-  Serial.print("?");
-  if (Temp != NilTemperature) {
-    if (Temp > switchTemp) {
-      result = HIGH;
-    }
-    else {
-      result = LOW;
-    }
-  }
-  else {
-    Serial.print(" invalid");
-  }
-  Serial.print(" -> ");
-  Serial.println(result);
-  Serial.println("");
-  return result;
+  //int valPumpHot = digitalRead(PinOutputPumpHot);
+  //int valPumpCold = digitalRead(PinOutputPumpCold);
+  Serial.print("PumpHot -> ");
+  Serial.println(valPumpHot);
+  Serial.print("PumpCold -> ");
+  Serial.println(valPumpCold);
+  return (valPumpHot || valPumpCold);
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void setup() {
   pinMode(PinOutputLED, OUTPUT);
-  pinMode(PinOutputFET, OUTPUT);
-  //  digitalWrite(PinOutputFET, HIGH);  //LOWActive -> set LOW to MOSFET-GATE for Setup
-  digitalWrite(PinOutputFET, LOW);  //LOWActive -> set LOW to MOSFET-GATE for Setup
-  Serial.begin(38400);
+  pinMode(PinOutputPumpHot, OUTPUT);
+  pinMode(PinOutputPumpCold, OUTPUT);
+  digitalWrite(PinOutputPumpHot, FALSE);
+  digitalWrite(PinOutputPumpCold, FALSE);
+  //Serial.begin(38400);
+  Serial.begin(9600);
   sensors.begin();
   delay(1000);
   printLine("-");
   Serial.println("");
-  mapSensors();
+  mapDevices();
 }
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//----------------------------------------------------------------------------------------------------------------
 void loop() {
   printLine(".");
+  //printSpace(20);
   Serial.println(loopCount);
-  totalDevices = discoverOneWireDevices();         // get addresses of our one wire devices into allAddress array
+  totalDevices = discoverOneWireDevices(); // get addresses of our one wire devices into allAddress array
+  setDeviceStatus();
   for (byte i = 0; i < totalDevices; i++) {
-    sensors.setResolution(allAddress[i], 10);      // and set the a to d conversion resolution of each.
+    if (allAddress[i][0] ==  DS18B20_FAMILY_ID) {
+      sensors.setResolution(allAddress[i], 10); // and set the a to d conversion resolution of each.
+    }
   }
-  setSensorStatus();
+  //DATA---------------------------------------------------------------------
   getDataFromDevices();
-  if (PumpRequestSensorToHot(CC, ActionCollectorToHot) || PumpRequestSensorToHot(CH, ActionCollectorToHot) || PumpRequestCollectorDiff()) {
-    PumpON = HIGH;
+
+  //ACTION-------------------------------------------------------------------
+  float BHTemperature = Devices[arrayPos(BH)].temperature;
+  float CHTemperature = Devices[arrayPos(CH)].temperature;
+  byte BarrelState = Devices[arrayPos(E0)].IOData;
+  //Temperatures valid?
+  if (BHTemperature != NilTemperature && BHTemperature < TEMPERATURE_MAX_VALID && CHTemperature != NilTemperature && CHTemperature < TEMPERATURE_MAX_VALID) {
+    //ACTION 1: Manage Hysteresis
+    float OffsetTemperature = 0;
+    if (PumpsActive) {
+      OffsetTemperature = TEMPERATURE_HYSTERESIS;
+      Serial.print("Hysteresis active (");
+      Serial.print(TEMPERATURE_HYSTERESIS);
+      Serial.println("K)");
+    }
+    float ToggleTemperature = CHTemperature - BHTemperature - TEMPERATURE_DIFF_TRIGGER + OffsetTemperature;
+    Serial.print("Action requirements: (CH > ");
+    Serial.print(BHTemperature + TEMPERATURE_DIFF_TRIGGER - OffsetTemperature);
+    Serial.println(" C)");
+    //Minimumtemperatur reached?
+    if (CHTemperature > (TEMPERATURE_MIN - OffsetTemperature)) {
+      //ACTION 2: Set PumpMpde!
+      int PumpMode = PUMP_MODE_ALL;
+      switch (BarrelState) {
+        case LEVEL_LOW:
+          PumpMode = PUMP_MODE_COLD;
+          break;
+        case LEVEL_MID:
+          PumpMode = PUMP_MODE_HOTNCOLD;
+          break;
+        case LEVEL_FULL:
+          PumpMode = PUMP_MODE_HOT;
+          break;
+        default:
+          PumpMode = PUMP_MODE_ALL;
+          break;
+      }
+      //Collector Temperature higher than Barreltemperature regarding DiffTrigger and Hysteresis?
+      //if (CHTemperature > (BHTemperature + TEMPERATURE_DIFF_TRIGGER - OffsetTemperature)) {
+      if (ToggleTemperature > 0) {
+        //ACTION 3: Pump!
+        Serial.print("Compensation in progress!(");
+        Serial.print(ToggleTemperature);
+        Serial.println(" K)");
+        PumpsActive = pumpAction(PumpMode, TRUE);
+      }
+      else {
+        //Switch off
+        if (OffsetTemperature > 0) {
+          Serial.println("Toggle temperature reached. -> Switch off pumps! ");
+        }
+        PumpsActive = pumpAction(PUMP_MODE_ALL, FALSE);
+      }
+    }
+    else {
+      Serial.print("Below Minimumtemperature for FHS! (");
+      Serial.print(TEMPERATURE_MIN);
+      Serial.println(" °C)");
+      PumpsActive = pumpAction(PUMP_MODE_ALL, FALSE);
+    }
+
   }
   else {
-    PumpON = LOW;
+    Serial.println(F("Invalid Temperatures found."));
+    PumpsActive = pumpAction(PUMP_MODE_ALL, FALSE);
   }
-  if (PumpON) {
-    digitalWrite(PinOutputLED, HIGH);
-    //    digitalWrite(PinOutputFET, LOW);    //LOWActive -> set HIGH to MOSFET-GATE
-    digitalWrite(PinOutputFET, HIGH);    //LOWActive -> set LOW to MOSFET-GATE
-    Serial.println("Pump -> ON");
-  }
-  else {
-    digitalWrite(PinOutputLED, LOW);
-    //    digitalWrite(PinOutputFET, HIGH);    //LOWActive -> set LOW to MOSFET-GATE
-    digitalWrite(PinOutputFET, LOW);    //LOWActive -> set LOW to MOSFET-GATE
-    Serial.println("Pump -> OFF");
-  }
+  //Serial.print("PumpsActive -> ");
+  //Serial.println(PumpsActive);
   loopCount++;
   delay(1000);
 }
-
-
