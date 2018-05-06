@@ -34,19 +34,20 @@
 
 //Hardware
 #define PinOutputLED 13 // Optics
-#define PinOutputPumpHot 6 // To MOSFET-Gate of Pump 3
-#define PinOutputPumpCold 7 // To MOSFET-Gate of Pump 4
+#define PinOutputPumpHot 7 // To MOSFET-Gate of Pump 3
+#define PinOutputPumpCold 6 // To MOSFET-Gate of Pump 4
 
 //DeviceMapping
 #define T0 0
 #define CC 1
-#define CH 2
+//#define CH 2
+#define T2 2
 #define BC 3
 #define T4 4
 #define T5 5
 #define T6 6
 #define BH 7
-#define T8 8
+#define CH 8
 #define T9 9
 #define E0 10
 
@@ -83,13 +84,15 @@ byte allAddress [NumberOfDevices][8]; // Device Addresses are 8-element byte arr
 byte totalDevices; // Declare variable to store number of One Wire devices
 // that are actually discovered.
 //char allNames[NumberOfDevices][NameMaxCharLength]={"T0","BC","BH","CC","CH","T5","T6","T7","T8","T9"};
-char allNames[NumberOfDevices][NameMaxCharLength] = {"T0", "CC", "CH", "BC", "T4", "T5", "T6", "BH", "T8", "T9", "E0"};
-byte ROMMapping[NumberOfDevices] = {T0, CC, CH, BC, T4, T5, T6, BH, T8, T9, E0};
+//char allNames[NumberOfDevices][NameMaxCharLength] = {"T0", "CC", "CH", "BC", "T4", "T5", "T6", "BH", "T8", "T9", "E0"};
+//byte ROMMapping[NumberOfDevices] = {T0, CC, CH, BC, T4, T5, T6, BH, T8, T9, E0};
+char allNames[NumberOfDevices][NameMaxCharLength] = {"T0", "CC", "T2", "BC", "T4", "T5", "T6", "BH", "CH", "T9", "E0"};
+byte ROMMapping[NumberOfDevices] = {T0, CC, T2, BC, T4, T5, T6, BH, CH, T9, E0};
 int USBPlugged = 0; // me: 0 = external Power, 1 = USB
 int loopCount = 0;
 struct DeviceRecord {
   uint8_t address[8];
-  bool active = FALSE;
+  bool active = LOW;
   //float temperature[2] = {NilTemperature, NilTemperature};
   float temperature = NilTemperature;
   byte IOData = LEVEL_UNKNOWN;
@@ -97,7 +100,7 @@ struct DeviceRecord {
 typedef struct DeviceRecord DeviceData;
 DeviceData Devices[NumberOfDevices];
 
-bool PumpsActive = FALSE;
+bool PumpsActive = LOW;
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void printLine(char sign[1]) {
   for (byte i = 0; i < 70; i++) {
@@ -141,10 +144,10 @@ bool byteArrayMatch(byte byte1[8], byte byte2[8]) {
     }
   }
   if (goil == 8) {
-    return TRUE;
+    return HIGH;
   }
   else {
-    return FALSE;
+    return LOW;
   }
 }
 //----------------------------------------------------------------------------------------------------------------
@@ -162,7 +165,7 @@ void setDeviceStatus() {
     while (a < NumberOfDevices) {
       if (byteArrayMatch(allAddress[a], tempByteArray)) {
         hit = a;
-        Devices[d].active = TRUE;
+        Devices[d].active = HIGH;
         //Serial.print(" = ");
         //Serial.print("Device ");
         //Serial.print(a);
@@ -171,7 +174,7 @@ void setDeviceStatus() {
         break;
       }
       else {
-        Devices[d].active = FALSE;
+        Devices[d].active = LOW;
       }
       a++;
     }
@@ -185,7 +188,7 @@ void setDeviceStatus() {
 //----------------------------------------------------------------------------------------------------------------
 uint8_t readDS2413(byte DS2413Address[8])
 {
-  bool ok = false;
+  bool ok = LOW;
   uint8_t results;
 
   oneWire.reset();
@@ -321,8 +324,8 @@ byte arrayPos(byte definition) {
 }
 //----------------------------------------------------------------------------------------------------------------
 bool pumpAction(int PumpMode, bool switchMode) {
-  bool valPumpHot = FALSE;
-  bool valPumpCold = FALSE;
+  bool valPumpHot = LOW;
+  bool valPumpCold = LOW;
   //switchMode == 0 -> Pump OFF;
   //switchMode == 1 -> Pump ON;
   switch (PumpMode) {
@@ -343,24 +346,24 @@ bool pumpAction(int PumpMode, bool switchMode) {
     case PUMP_MODE_HOT:
       //Switch Hot, switch off Cold
       digitalWrite(PinOutputPumpHot, switchMode);
-      digitalWrite(PinOutputPumpCold, FALSE);
+      digitalWrite(PinOutputPumpCold, LOW);
       valPumpHot = switchMode;
       break;
     case PUMP_MODE_COLD:
       //Switch Cold, switch off Hot
-      digitalWrite(PinOutputPumpHot, FALSE);
+      digitalWrite(PinOutputPumpHot, LOW);
       digitalWrite(PinOutputPumpCold, switchMode);
       valPumpCold = switchMode;
       break;
     case PUMP_MODE_NONE:
       //Switch off all
-      digitalWrite(PinOutputPumpHot, FALSE);
-      digitalWrite(PinOutputPumpCold, FALSE);
+      digitalWrite(PinOutputPumpHot, LOW);
+      digitalWrite(PinOutputPumpCold, LOW);
       break;
     default:
       //Switch off all
-      digitalWrite(PinOutputPumpHot, FALSE);
-      digitalWrite(PinOutputPumpCold, FALSE);
+      digitalWrite(PinOutputPumpHot, LOW);
+      digitalWrite(PinOutputPumpCold, LOW);
       break;
   }
   //int valPumpHot = digitalRead(PinOutputPumpHot);
@@ -376,8 +379,8 @@ void setup() {
   pinMode(PinOutputLED, OUTPUT);
   pinMode(PinOutputPumpHot, OUTPUT);
   pinMode(PinOutputPumpCold, OUTPUT);
-  digitalWrite(PinOutputPumpHot, FALSE);
-  digitalWrite(PinOutputPumpCold, FALSE);
+  digitalWrite(PinOutputPumpHot, LOW);
+  digitalWrite(PinOutputPumpCold, LOW);
   //Serial.begin(38400);
   Serial.begin(9600);
   sensors.begin();
@@ -444,27 +447,27 @@ void loop() {
         Serial.print("Compensation in progress!(");
         Serial.print(ToggleTemperature);
         Serial.println(" K)");
-        PumpsActive = pumpAction(PumpMode, TRUE);
+        PumpsActive = pumpAction(PumpMode, HIGH);
       }
       else {
         //Switch off
         if (OffsetTemperature > 0) {
           Serial.println("Toggle temperature reached. -> Switch off pumps! ");
         }
-        PumpsActive = pumpAction(PUMP_MODE_ALL, FALSE);
+        PumpsActive = pumpAction(PUMP_MODE_ALL, LOW);
       }
     }
     else {
       Serial.print("Below Minimumtemperature for FHS! (");
       Serial.print(TEMPERATURE_MIN);
       Serial.println(" °C)");
-      PumpsActive = pumpAction(PUMP_MODE_ALL, FALSE);
+      PumpsActive = pumpAction(PUMP_MODE_ALL, LOW);
     }
 
   }
   else {
     Serial.println(F("Invalid Temperatures found."));
-    PumpsActive = pumpAction(PUMP_MODE_ALL, FALSE);
+    PumpsActive = pumpAction(PUMP_MODE_ALL, LOW);
   }
   //Serial.print("PumpsActive -> ");
   //Serial.println(PumpsActive);
