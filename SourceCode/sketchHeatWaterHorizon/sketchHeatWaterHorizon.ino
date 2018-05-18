@@ -101,6 +101,7 @@ typedef struct DeviceRecord DeviceData;
 DeviceData Devices[NumberOfDevices];
 
 bool PumpsActive = LOW;
+uint8_t OutputStates = 0;
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void printLine(char sign[1]) {
   for (byte i = 0; i < 70; i++) {
@@ -374,6 +375,18 @@ bool pumpAction(int PumpMode, bool switchMode) {
   Serial.println(valPumpCold);
   return (valPumpHot || valPumpCold);
 }
+bool checkValidTemp(float TempCold, float TempHot) {
+
+}
+bool getCollectorPumpRequest(float TempCold, float TempHot, uint8_t OutputStates) {
+
+}
+uint8_t getNominalOutputValues(bool CollectorPumpRequest, uint8_t BarrelState) {
+
+}
+uint8_t setOutputs(uint8_t NominalOutputValues) {
+
+}
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void setup() {
   pinMode(PinOutputLED, OUTPUT);
@@ -405,11 +418,20 @@ void loop() {
   getDataFromDevices();
 
   //ACTION-------------------------------------------------------------------
+  bool PumpRequest = LOW;
+  uint8_t NominalOutputValues = 0; // disable all
   float BHTemperature = Devices[arrayPos(BH)].temperature;
   float CHTemperature = Devices[arrayPos(CH)].temperature;
   byte BarrelState = Devices[arrayPos(E0)].IOData;
-  //Temperatures valid?
-  if (BHTemperature != NilTemperature && BHTemperature < TEMPERATURE_MAX_VALID && CHTemperature != NilTemperature && CHTemperature < TEMPERATURE_MAX_VALID) {
+
+  if (checkValidTemp(BHTemperature, CHTemperature)) {
+    PumpRequest = getCollectorPumpRequest(BHTemperature, CHTemperature, OutputStates);
+    NominalOutputValues = getNominalOutputValues(PumpRequest, BarrelState);
+  }
+  OutputStates = setOutputs(NominalOutputValues);
+  /*
+    //Temperatures valid?
+    if (BHTemperature != NilTemperature && BHTemperature < TEMPERATURE_MAX_VALID && CHTemperature != NilTemperature && CHTemperature < TEMPERATURE_MAX_VALID) {
     //ACTION 1: Manage Hysteresis
     float OffsetTemperature = 0;
     if (PumpsActive) {
@@ -464,13 +486,14 @@ void loop() {
       PumpsActive = pumpAction(PUMP_MODE_ALL, LOW);
     }
 
-  }
-  else {
+    }
+    else {
     Serial.println(F("Invalid Temperatures found."));
     PumpsActive = pumpAction(PUMP_MODE_ALL, LOW);
-  }
-  //Serial.print("PumpsActive -> ");
-  //Serial.println(PumpsActive);
-  loopCount++;
+    }
+    //Serial.print("PumpsActive -> ");
+    //Serial.println(PumpsActive);
+    loopCount++;
+  */
   delay(1000);
 }
