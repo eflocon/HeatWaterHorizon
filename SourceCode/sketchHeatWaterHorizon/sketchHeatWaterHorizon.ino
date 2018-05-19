@@ -36,6 +36,7 @@
 #define PinOutputLED 13 // Optics
 #define PinOutputPumpHot 7 // To MOSFET-Gate of Pump 3
 #define PinOutputPumpCold 6 // To MOSFET-Gate of Pump 4
+#define PinExternalTrigger 2 // InterruptPin (Int0)PD2
 
 //DeviceMapping
 #define T0 0
@@ -102,6 +103,7 @@ DeviceData Devices[NumberOfDevices];
 
 bool PumpsActive = LOW;
 uint8_t OutputStates = 0;
+bool ExternalTrigger = LOW;
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void printLine(char sign[1]) {
   for (byte i = 0; i < 70; i++) {
@@ -387,13 +389,36 @@ uint8_t getNominalOutputValues(bool CollectorPumpRequest, uint8_t BarrelState) {
 uint8_t setOutputs(uint8_t NominalOutputValues) {
 
 }
+//Interrupt
+void enableInterruptForExternalTrigger(uint8_t pin, bool enable) {
+  if (enable) {
+    //enable interruot for going to LOW at inputpin
+    attachInterrupt(digitalPinToInterrupt(pin), externalTriggerResponse, FALLING);
+  }
+  else {
+    //disable
+    detachInterrupt(pin);
+  }
+}
+//ISR
+void externalTriggerResponse() {
+  //disable interrupt
+  enableInterruptForExternalTrigger(PinExternalTrigger, LOW);
+  //set flag for external trigger
+  ExternalTrigger = HIGH;
+}
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void setup() {
   pinMode(PinOutputLED, OUTPUT);
   pinMode(PinOutputPumpHot, OUTPUT);
-  pinMode(PinOutputPumpCold, OUTPUT);
   digitalWrite(PinOutputPumpHot, LOW);
+  pinMode(PinOutputPumpCold, OUTPUT);
   digitalWrite(PinOutputPumpCold, LOW);
+
+  //Use interrupt for External Trigger
+  pinMode(PinExternalTrigger, INPUT_PULLUP);
+  enableInterruptForExternalTrigger(PinExternalTrigger, HIGH);
+
   //Serial.begin(38400);
   Serial.begin(9600);
   sensors.begin();
@@ -425,6 +450,11 @@ void loop() {
   byte BarrelState = Devices[arrayPos(E0)].IOData;
 
   if (checkValidTemp(BHTemperature, CHTemperature)) {
+    if (ExternalTrigger) {
+      //for external trigger: set testcase with nice values to activate pump(s) for sure
+      BHTemperature = 50;
+      CHTemperature = 20;
+    }
     PumpRequest = getCollectorPumpRequest(BHTemperature, CHTemperature, OutputStates);
     NominalOutputValues = getNominalOutputValues(PumpRequest, BarrelState);
   }
@@ -496,4 +526,11 @@ void loop() {
     loopCount++;
   */
   delay(1000);
+  if (ExternalTrigger) {
+    //clear flag
+    ExternalTrigger = LOW;
+    //reactivate interrupt
+    enableInterruptForExternalTrigger(PinExternalTrigger, HIGH);
+  }
+
 }
