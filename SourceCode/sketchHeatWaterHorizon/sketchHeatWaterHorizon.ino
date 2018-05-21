@@ -1,5 +1,5 @@
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//WAFLOCON FIRMWARE 2017
+//WAFLOCON FIRMWARE
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //----------------------------------------------------------------------------------------------------------------
 //https://learn.adafruit.com/adafruit-1-wire-gpio-breakout-ds2413/onewire-library
@@ -102,8 +102,9 @@ typedef struct DeviceRecord DeviceData;
 DeviceData Devices[NumberOfDevices];
 
 bool PumpsActive = LOW;
-uint8_t OutputStates = 0;
+uint8_t OutputStates = PUMP_MODE_NONE;
 bool ExternalTrigger = LOW;
+bool InterruptTaskFinshed = LOW;
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void printLine(char sign[1]) {
   for (byte i = 0; i < 70; i++) {
@@ -189,8 +190,7 @@ void setDeviceStatus() {
   // Serial.println("");
 }
 //----------------------------------------------------------------------------------------------------------------
-uint8_t readDS2413(byte DS2413Address[8])
-{
+uint8_t readDS2413(byte DS2413Address[8]) {
   bool ok = LOW;
   uint8_t results;
 
@@ -378,21 +378,86 @@ bool pumpAction(int PumpMode, bool switchMode) {
   return (valPumpHot || valPumpCold);
 }
 bool checkValidTemp(float TempCold, float TempHot) {
-
+  if (TempCold != NilTemperature && TempCold < TEMPERATURE_MAX_VALID && TempHot != NilTemperature && TempHot < TEMPERATURE_MAX_VALID) {
+    return HIGH;
+  }
+  else {
+    return LOW;
+  }
 }
 bool getCollectorPumpRequest(float TempCold, float TempHot, uint8_t OutputStates) {
-
+  bool result = LOW;
+  if (OutputStates == PUMP_MODE_NONE) {
+    //Pump(s) ON or OFF regarding temperature difference
+    //Examples: // 25 - 20 > 4 = HIGH
+    result = (TempHot - TempCold > TEMPERATURE_DIFF_TRIGGER);
+  }
+  else {
+    //Pump(s) ON or OFF regarding temperature difference including Hysteresis
+    //Examples: 25 + 2 - 20 > 4 = HIGH, 23 + 2 - 21 > 4 = LOW
+    result = (TempHot + TEMPERATURE_HYSTERESIS - TempCold > TEMPERATURE_DIFF_TRIGGER ); 
+  }
 }
 uint8_t getNominalOutputValues(bool CollectorPumpRequest, uint8_t BarrelState) {
-
+  uint8_t result = PUMP_MODE_NONE;
+  if (BarrelState == LEVEL_LOW) {
+    result = PUMP_MODE_COLD;
+  }
+  else if (BarrelState == LEVEL_MID && CollectorPumpRequest) {
+    result = PUMP_MODE_HOTNCOLD;
+  }
+  else if (BarrelState == LEVEL_FULL && CollectorPumpRequest) {
+    result = PUMP_MODE_HOT;
+  }
+  return result;
 }
 uint8_t setOutputs(uint8_t NominalOutputValues) {
-
+  bool valPumpHot;
+  bool valPumpCold;
+  switch (NominalOutputValues) {
+    case PUMP_MODE_ALL:
+      //Switch all
+      valPumpHot = HIGH;
+      valPumpCold = HIGH;
+      break;
+    case PUMP_MODE_HOTNCOLD:
+      //Switch all
+      valPumpHot = HIGH;
+      valPumpCold = HIGH;
+      break;
+    case PUMP_MODE_HOT:
+      //Switch Hot, switch off Cold
+      valPumpHot = HIGH;
+      valPumpCold = LOW;
+      break;
+    case PUMP_MODE_COLD:
+      //Switch Cold, switch off Hot
+      valPumpHot = LOW;
+      valPumpCold = HIGH;
+      break;
+    case PUMP_MODE_NONE:
+      //Switch off all
+      valPumpHot = LOW;
+      valPumpCold = LOW;
+      break;
+    default:
+      //Switch off all
+      valPumpHot = LOW;
+      valPumpCold = LOW;
+      break;
+      digitalWrite(PinOutputPumpHot, valPumpHot);
+      digitalWrite(PinOutputPumpCold, valPumpCold);
+  }
+  Serial.print("PumpHot -> ");
+  Serial.println(valPumpHot);
+  Serial.print("PumpCold -> ");
+  Serial.println(valPumpCold);
+  return NominalOutputValues;
 }
 //Interrupt
 void enableInterruptForExternalTrigger(uint8_t pin, bool enable) {
   if (enable) {
-    //enable interruot for going to LOW at inputpin
+    //enable interrupt for going to LOW at inputpin
     attachInterrupt(digitalPinToInterrupt(pin), externalTriggerResponse, FALLING);
   }
   else {
@@ -451,9 +516,12 @@ void loop() {
 
   if (checkValidTemp(BHTemperature, CHTemperature)) {
     if (ExternalTrigger) {
+      //clear flag
+      ExternalTrigger = LOW;
       //for external trigger: set testcase with nice values to activate pump(s) for sure
       BHTemperature = 50;
       CHTemperature = 20;
+      InterruptTaskFinshed = HIGH;
     }
     PumpRequest = getCollectorPumpRequest(BHTemperature, CHTemperature, OutputStates);
     NominalOutputValues = getNominalOutputValues(PumpRequest, BarrelState);
@@ -526,11 +594,9 @@ void loop() {
     loopCount++;
   */
   delay(1000);
-  if (ExternalTrigger) {
-    //clear flag
-    ExternalTrigger = LOW;
+  if (InterruptTaskFinshed) {
     //reactivate interrupt
     enableInterruptForExternalTrigger(PinExternalTrigger, HIGH);
+    InterruptTaskFinshed = LOW;
   }
-
 }
