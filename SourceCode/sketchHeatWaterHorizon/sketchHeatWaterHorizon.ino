@@ -327,6 +327,7 @@ byte arrayPos(byte definition) {
 }
 //----------------------------------------------------------------------------------------------------------------
 bool pumpAction(int PumpMode, bool switchMode) {
+  Serial.println("pumpAction()");
   bool valPumpHot = LOW;
   bool valPumpCold = LOW;
   //switchMode == 0 -> Pump OFF;
@@ -378,27 +379,56 @@ bool pumpAction(int PumpMode, bool switchMode) {
   return (valPumpHot || valPumpCold);
 }
 bool checkValidTemp(float TempCold, float TempHot) {
+  //  Serial.println("checkValidTemp()");
   if (TempCold != NilTemperature && TempCold < TEMPERATURE_MAX_VALID && TempHot != NilTemperature && TempHot < TEMPERATURE_MAX_VALID) {
     return HIGH;
   }
   else {
+    if (TempCold == NilTemperature) {
+      Serial.println("TempCold invalid");
+    }
+    if (TempCold >= TEMPERATURE_MAX_VALID) {
+      Serial.println("TempCold > TEMPERATURE_MAX_VALID");
+    }
+    if (TempHot == NilTemperature) {
+      Serial.println("TempHot invalid");
+    }
+    if (TempHot >= TEMPERATURE_MAX_VALID) {
+      Serial.println("TempHot > TEMPERATURE_MAX_VALID");
+    }
     return LOW;
   }
 }
 bool getCollectorPumpRequest(float TempCold, float TempHot, uint8_t OutputStates) {
+  //  Serial.println("getCollectorPumpRequest()");
+  //  Serial.print("TempHot = ");
+  //  Serial.println(TempHot);
+  //  Serial.print("TempCold = ");
+  //  Serial.println(TempCold);
+
   bool result = LOW;
   if (OutputStates == PUMP_MODE_NONE) {
     //Pump(s) ON or OFF regarding temperature difference
     //Examples: // 25 - 20 > 4 = HIGH
     result = (TempHot - TempCold > TEMPERATURE_DIFF_TRIGGER);
+    Serial.print("TempHot - TempCold > TEMPERATURE_DIFF_TRIGGER -> ");
+    Serial.print(TempHot - TempCold);
+    Serial.print(" > ");
+    Serial.println(TEMPERATURE_DIFF_TRIGGER);
   }
   else {
     //Pump(s) ON or OFF regarding temperature difference including Hysteresis
     //Examples: 25 + 2 - 20 > 4 = HIGH, 23 + 2 - 21 > 4 = LOW
-    result = (TempHot + TEMPERATURE_HYSTERESIS - TempCold > TEMPERATURE_DIFF_TRIGGER ); 
+    result = (TempHot + TEMPERATURE_HYSTERESIS - TempCold > TEMPERATURE_DIFF_TRIGGER);
+    Serial.print("TempHot + TEMPERATURE_HYSTERESIS - TempCold > TEMPERATURE_DIFF_TRIGGER -> ");
+    Serial.print(TempHot + TEMPERATURE_HYSTERESIS - TempCold);
+    Serial.print(" > ");
+    Serial.println(TEMPERATURE_DIFF_TRIGGER);
   }
+  return result;
 }
 uint8_t getNominalOutputValues(bool CollectorPumpRequest, uint8_t BarrelState) {
+  //  Serial.println("getNominalOutputValues()");
   uint8_t result = PUMP_MODE_NONE;
   if (BarrelState == LEVEL_LOW) {
     result = PUMP_MODE_COLD;
@@ -412,6 +442,7 @@ uint8_t getNominalOutputValues(bool CollectorPumpRequest, uint8_t BarrelState) {
   return result;
 }
 uint8_t setOutputs(uint8_t NominalOutputValues) {
+  //  Serial.println("setOutputs()");
   bool valPumpHot;
   bool valPumpCold;
   switch (NominalOutputValues) {
@@ -445,9 +476,9 @@ uint8_t setOutputs(uint8_t NominalOutputValues) {
       valPumpHot = LOW;
       valPumpCold = LOW;
       break;
-      digitalWrite(PinOutputPumpHot, valPumpHot);
-      digitalWrite(PinOutputPumpCold, valPumpCold);
   }
+  digitalWrite(PinOutputPumpHot, valPumpHot);
+  digitalWrite(PinOutputPumpCold, valPumpCold);
   Serial.print("PumpHot -> ");
   Serial.println(valPumpHot);
   Serial.print("PumpCold -> ");
@@ -456,6 +487,7 @@ uint8_t setOutputs(uint8_t NominalOutputValues) {
 }
 //Interrupt
 void enableInterruptForExternalTrigger(uint8_t pin, bool enable) {
+  Serial.println("enableInterruptForExternalTrigger()");
   if (enable) {
     //enable interrupt for going to LOW at inputpin
     attachInterrupt(digitalPinToInterrupt(pin), externalTriggerResponse, FALLING);
@@ -467,6 +499,7 @@ void enableInterruptForExternalTrigger(uint8_t pin, bool enable) {
 }
 //ISR
 void externalTriggerResponse() {
+  Serial.println("externalTriggerResponse()");
   //disable interrupt
   enableInterruptForExternalTrigger(PinExternalTrigger, LOW);
   //set flag for external trigger
@@ -477,8 +510,12 @@ void setup() {
   pinMode(PinOutputLED, OUTPUT);
   pinMode(PinOutputPumpHot, OUTPUT);
   digitalWrite(PinOutputPumpHot, LOW);
+  Serial.print("PinOutputPumpHot -> ");
+  Serial.println(PinOutputPumpHot);
   pinMode(PinOutputPumpCold, OUTPUT);
   digitalWrite(PinOutputPumpCold, LOW);
+  Serial.print("PinOutputPumpCold -> ");
+  Serial.println(PinOutputPumpCold);
 
   //Use interrupt for External Trigger
   pinMode(PinExternalTrigger, INPUT_PULLUP);
