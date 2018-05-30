@@ -11,7 +11,7 @@
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //----------------------------------------------------------------------------------------------------------------
 //UserSettings
-#define TEMPERATURE_MIN 25           //[Grad Celsius] MinTemperature at CC for Access to Barrel
+//#define TEMPERATURE_MIN 25           //[Grad Celsius] MinTemperature at CC for Access to Barrel
 //!!!! TEMPERATURE_DIFF_TRIGGER > TEMPERATURE_HYSTERESIS !!!!!
 #define TEMPERATURE_DIFF_TRIGGER 4   //[Grad Celsius] TriggerdifferenceTemperature
 #define TEMPERATURE_HYSTERESIS 2     //[K] Temperaturedifference beetween Pump ON/OFF
@@ -25,12 +25,16 @@
 #define LEVEL_MID 0x0E  //BIN: 1110 // B (BHSE) open == HIGH(PullUp), A (BHSF) shorten to GND == LOW
 #define LEVEL_FULL 0x0F //BIN: 1111 // B+A open == HIGH
 #define LEVEL_UNKNOWN 0x00 //BIN: 0000 // Default value
+#define LEVEL_LOW_MAX_CYCLECOUNT 600
+#define LEVEL_LOW_RESET_CYCLECOUNT 1000
 
 #define PUMP_MODE_NONE 0
 #define PUMP_MODE_HOTNCOLD 1
 #define PUMP_MODE_HOT 2
 #define PUMP_MODE_COLD 3
 #define PUMP_MODE_ALL 4
+
+
 
 //Hardware
 #define PinOutputLED 13 // Optics
@@ -91,6 +95,7 @@ char allNames[NumberOfDevices][NameMaxCharLength] = {"T0", "CC", "T2", "BC", "T4
 byte ROMMapping[NumberOfDevices] = {T0, CC, T2, BC, T4, T5, T6, BH, CH, T9, E0};
 int USBPlugged = 0; // me: 0 = external Power, 1 = USB
 int loopCount = 0;
+int BarrelLowLoopCount = 0;
 struct DeviceRecord {
   uint8_t address[8];
   bool active = LOW;
@@ -101,10 +106,10 @@ struct DeviceRecord {
 typedef struct DeviceRecord DeviceData;
 DeviceData Devices[NumberOfDevices];
 
-bool PumpsActive = LOW;
 uint8_t OutputStates = PUMP_MODE_NONE;
 bool ExternalTrigger = LOW;
 bool InterruptTaskFinshed = LOW;
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void printLine(char sign[1]) {
   for (byte i = 0; i < 70; i++) {
@@ -326,58 +331,6 @@ byte arrayPos(byte definition) {
   return thePosition;
 }
 //----------------------------------------------------------------------------------------------------------------
-bool pumpAction(int PumpMode, bool switchMode) {
-  Serial.println("pumpAction()");
-  bool valPumpHot = LOW;
-  bool valPumpCold = LOW;
-  //switchMode == 0 -> Pump OFF;
-  //switchMode == 1 -> Pump ON;
-  switch (PumpMode) {
-    case PUMP_MODE_ALL:
-      //Switch all
-      digitalWrite(PinOutputPumpHot, switchMode);
-      digitalWrite(PinOutputPumpCold, switchMode);
-      valPumpHot = switchMode;
-      valPumpCold = switchMode;
-      break;
-    case PUMP_MODE_HOTNCOLD:
-      //Switch all
-      digitalWrite(PinOutputPumpHot, switchMode);
-      digitalWrite(PinOutputPumpCold, switchMode);
-      valPumpHot = switchMode;
-      valPumpCold = switchMode;
-      break;
-    case PUMP_MODE_HOT:
-      //Switch Hot, switch off Cold
-      digitalWrite(PinOutputPumpHot, switchMode);
-      digitalWrite(PinOutputPumpCold, LOW);
-      valPumpHot = switchMode;
-      break;
-    case PUMP_MODE_COLD:
-      //Switch Cold, switch off Hot
-      digitalWrite(PinOutputPumpHot, LOW);
-      digitalWrite(PinOutputPumpCold, switchMode);
-      valPumpCold = switchMode;
-      break;
-    case PUMP_MODE_NONE:
-      //Switch off all
-      digitalWrite(PinOutputPumpHot, LOW);
-      digitalWrite(PinOutputPumpCold, LOW);
-      break;
-    default:
-      //Switch off all
-      digitalWrite(PinOutputPumpHot, LOW);
-      digitalWrite(PinOutputPumpCold, LOW);
-      break;
-  }
-  //int valPumpHot = digitalRead(PinOutputPumpHot);
-  //int valPumpCold = digitalRead(PinOutputPumpCold);
-  Serial.print("PumpHot -> ");
-  Serial.println(valPumpHot);
-  Serial.print("PumpCold -> ");
-  Serial.println(valPumpCold);
-  return (valPumpHot || valPumpCold);
-}
 bool checkValidTemp(float TempCold, float TempHot) {
   //  Serial.println("checkValidTemp()");
   if (TempCold != NilTemperature && TempCold < TEMPERATURE_MAX_VALID && TempHot != NilTemperature && TempHot < TEMPERATURE_MAX_VALID) {
@@ -550,7 +503,12 @@ void loop() {
   float BHTemperature = Devices[arrayPos(BH)].temperature;
   float CHTemperature = Devices[arrayPos(CH)].temperature;
   byte BarrelState = Devices[arrayPos(E0)].IOData;
-
+  if (BarrelState == LEVEL_LOW) {
+    BarrelLowLoopCount++;
+  }
+  else {
+    BarrelLowLoopCount = 0;
+  }
   if (checkValidTemp(BHTemperature, CHTemperature)) {
     if (ExternalTrigger) {
       //clear flag
@@ -563,77 +521,29 @@ void loop() {
     PumpRequest = getCollectorPumpRequest(BHTemperature, CHTemperature, OutputStates);
     NominalOutputValues = getNominalOutputValues(PumpRequest, BarrelState);
   }
-  OutputStates = setOutputs(NominalOutputValues);
-  /*
-    //Temperatures valid?
-    if (BHTemperature != NilTemperature && BHTemperature < TEMPERATURE_MAX_VALID && CHTemperature != NilTemperature && CHTemperature < TEMPERATURE_MAX_VALID) {
-    //ACTION 1: Manage Hysteresis
-    float OffsetTemperature = 0;
-    if (PumpsActive) {
-      OffsetTemperature = TEMPERATURE_HYSTERESIS;
-      Serial.print("Hysteresis active (");
-      Serial.print(TEMPERATURE_HYSTERESIS);
-      Serial.println("K)");
-    }
-    float ToggleTemperature = CHTemperature - BHTemperature - TEMPERATURE_DIFF_TRIGGER + OffsetTemperature;
-    Serial.print("Action requirements: (CH > ");
-    Serial.print(BHTemperature + TEMPERATURE_DIFF_TRIGGER - OffsetTemperature);
-    Serial.println(" C)");
-    //Minimumtemperatur reached?
-    if (CHTemperature > (TEMPERATURE_MIN - OffsetTemperature)) {
-      //ACTION 2: Set PumpMpde!
-      int PumpMode = PUMP_MODE_ALL;
-      switch (BarrelState) {
-        case LEVEL_LOW:
-          PumpMode = PUMP_MODE_COLD;
-          break;
-        case LEVEL_MID:
-          PumpMode = PUMP_MODE_HOTNCOLD;
-          break;
-        case LEVEL_FULL:
-          PumpMode = PUMP_MODE_HOT;
-          break;
-        default:
-          PumpMode = PUMP_MODE_ALL;
-          break;
-      }
-      //Collector Temperature higher than Barreltemperature regarding DiffTrigger and Hysteresis?
-      //if (CHTemperature > (BHTemperature + TEMPERATURE_DIFF_TRIGGER - OffsetTemperature)) {
-      if (ToggleTemperature > 0) {
-        //ACTION 3: Pump!
-        Serial.print("Compensation in progress!(");
-        Serial.print(ToggleTemperature);
-        Serial.println(" K)");
-        PumpsActive = pumpAction(PumpMode, HIGH);
-      }
-      else {
-        //Switch off
-        if (OffsetTemperature > 0) {
-          Serial.println("Toggle temperature reached. -> Switch off pumps! ");
-        }
-        PumpsActive = pumpAction(PUMP_MODE_ALL, LOW);
-      }
-    }
-    else {
-      Serial.print("Below Minimumtemperature for FHS! (");
-      Serial.print(TEMPERATURE_MIN);
-      Serial.println(" °C)");
-      PumpsActive = pumpAction(PUMP_MODE_ALL, LOW);
-    }
 
+  if (BarrelState == LEVEL_LOW && BarrelLowLoopCount >= LEVEL_LOW_MAX_CYCLECOUNT) {
+    // switch off pump after x cycles
+    Serial.print("BarrelState == LOW for more than ");
+    Serial.print(BarrelLowLoopCount);
+    Serial.print(" cycles. Reset in (");
+    Serial.print(LEVEL_LOW_RESET_CYCLECOUNT - BarrelLowLoopCount);
+    Serial.println(").");
+    OutputStates = setOutputs(PUMP_MODE_NONE);
+    if (BarrelLowLoopCount >= LEVEL_LOW_RESET_CYCLECOUNT) {
+      // reset pump after x cycles
+      BarrelLowLoopCount = 0;
     }
-    else {
-    Serial.println(F("Invalid Temperatures found."));
-    PumpsActive = pumpAction(PUMP_MODE_ALL, LOW);
-    }
-    //Serial.print("PumpsActive -> ");
-    //Serial.println(PumpsActive);
-    loopCount++;
-  */
+  }
+  else {
+    OutputStates = setOutputs(NominalOutputValues);
+  }
+
   delay(1000);
   if (InterruptTaskFinshed) {
     //reactivate interrupt
     enableInterruptForExternalTrigger(PinExternalTrigger, HIGH);
     InterruptTaskFinshed = LOW;
   }
+  loopCount++;
 }
