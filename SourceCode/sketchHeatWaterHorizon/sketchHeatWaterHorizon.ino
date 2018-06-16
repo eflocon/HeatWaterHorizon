@@ -440,23 +440,34 @@ uint8_t setOutputs(uint8_t NominalOutputValues) {
 }
 //Interrupt
 void enableInterruptForExternalTrigger(uint8_t pin, bool enable) {
-  Serial.println("enableInterruptForExternalTrigger()");
+  //Serial.println("enableInterruptForExternalTrigger()");
   if (enable) {
     //enable interrupt for going to LOW at inputpin
     attachInterrupt(digitalPinToInterrupt(pin), externalTriggerResponse, FALLING);
   }
   else {
     //disable
+    //TODO: doesn't work, make it work!
     detachInterrupt(pin);
   }
+  Serial.println("");
+  if (enable) {
+    Serial.print("Enable");
+  }
+  else {
+    Serial.print("Disable");
+  }
+  Serial.println(" interrupt for ExternalTrigger");
+  Serial.println("");
 }
 //ISR
 void externalTriggerResponse() {
-  Serial.println("externalTriggerResponse()");
   //disable interrupt
   enableInterruptForExternalTrigger(PinExternalTrigger, LOW);
   //set flag for external trigger
   ExternalTrigger = HIGH;
+  //  Serial.println("externalTriggerResponse()");
+  Serial.println("Set ExternalTriggerFlag");
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void setup() {
@@ -513,9 +524,10 @@ void loop() {
     if (ExternalTrigger) {
       //clear flag
       ExternalTrigger = LOW;
+      Serial.println("Clear ExternalTriggerFlag");
       //for external trigger: set testcase with nice values to activate pump(s) for sure
-      BHTemperature = 50;
-      CHTemperature = 20;
+      BHTemperature = 20;
+      CHTemperature = 50;
       InterruptTaskFinshed = HIGH;
     }
     PumpRequest = getCollectorPumpRequest(BHTemperature, CHTemperature, OutputStates);
